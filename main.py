@@ -371,7 +371,7 @@ if uploaded_files:
     sheet_selections = {}
     col_selections   = {}
 
-    # ── Step 1: File Configuration ───────────────────────────────────────────
+# ── Step 1: File Configuration ───────────────────────────────────────────
     st.markdown("---")
     st.subheader("📋 Step 1 · File Configuration")
 
@@ -379,12 +379,21 @@ if uploaded_files:
         fbytes = file_bytes_map[f.name]
         with st.expander(f"⚙️ Configure: {f.name}", expanded=True):
             if f.name.lower().endswith(".xlsx"):
-                sheet_names    = get_sheet_names(f.name, fbytes)
-                selected_sheet = st.selectbox(
-                    "Select Sheet", options=sheet_names, key=f"sheet_{f.name}"
-                )
-                sheet_selections[f.name] = selected_sheet
+                sheet_names = get_sheet_names(f.name, fbytes)
+                
+                # เช็คว่าถ้ามีแค่ 1 sheet ให้เลือกให้อัตโนมัติเลย ไม่ต้องโชว์ Dropdown
+                if len(sheet_names) == 1:
+                    selected_sheet = sheet_names[0]
+                    st.caption(f"📄 Auto-selected sheet: **{selected_sheet}**")
+                    sheet_selections[f.name] = selected_sheet
+                # ถ้ามีหลาย sheet ค่อยโชว์ Dropdown ให้เลือก
+                else:
+                    selected_sheet = st.selectbox(
+                        "Select Sheet", options=sheet_names, key=f"sheet_{f.name}"
+                    )
+                    sheet_selections[f.name] = selected_sheet
             else:
+                # สำหรับไฟล์ CSV
                 sheet_selections[f.name] = None
                 selected_sheet           = None
 
@@ -437,23 +446,52 @@ if uploaded_files:
         st.warning("Please configure at least one file to continue.")
         st.stop()
 
-    # ── Step 2: Plot Settings ────────────────────────────────────────────────
+# ── Step 2: Plot Settings ────────────────────────────────────────────────
     st.markdown("---")
     st.subheader("🗺️ Step 2 · Map Plot Settings")
 
-    pc1, pc2 = st.columns(2)
+    # Create 3 columns: KPI (Left), Groups (Middle), Range (Right)
+    pc1, pc2, pc3 = st.columns(3)
+    
     with pc1:
         plot_kpi = st.selectbox(
-            "KPI to plot on map (single selection)",
+            "📍 KPI to plot",
             options=available_kpis,
             index=next((i for i,c in enumerate(available_kpis) if "RSRP" in c.upper()), 0)
         )
+        
     with pc2:
         plot_groups = st.multiselect(
-            "Groups to display on map",
+            "🗂️ Groups / Files to display",
             options=all_groups, default=all_groups
         )
-    plot_range = st.slider("Color scale range for selected KPI", -140, 0, (-120, -70))
+        
+    with pc3:
+        # Calculate smart defaults based on the actual data of the selected KPI
+        if plot_kpi in combined.columns:
+            kpi_series = combined[plot_kpi].drop_nulls()
+            if not kpi_series.is_empty():
+                default_min = float(kpi_series.quantile(0.05)) # 5th percentile
+                default_max = float(kpi_series.quantile(0.95)) # 95th percentile
+            else:
+                default_min, default_max = -120.0, -70.0
+        else:
+            default_min, default_max = -120.0, -70.0
+            
+        # Fallback just in case min is somehow greater than or equal to max
+        if default_min >= default_max:
+            default_min -= 10.0
+            default_max += 10.0
+
+        # ลบ st.markdown ออก แล้วใช้ Label ของ input แทนเพื่อให้ตรงกับกล่องอื่น
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            range_min = st.number_input("🎨 Range Min", value=round(default_min, 1), step=1.0)
+        with rc2:
+            range_max = st.number_input("Range Max", value=round(default_max, 1), step=1.0)
+            
+        # Package it back into the tuple that Plotly expects
+        plot_range = (range_min, range_max)
 
     # ── Step 3: Statistics ───────────────────────────────────────────────────
     st.markdown("---")
