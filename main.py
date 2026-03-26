@@ -5,13 +5,44 @@ import python_calamine
 import os
 import io
 import json
+import requests  # <--- เพิ่ม library นี้สำหรับโหลดไฟล์จาก LINE
 
 st.set_page_config(page_title="Universal 5G Analyzer", layout="wide")
 st.title("🛰️ Universal RF Drive Test Analyzer")
 st.info("Upload CSV/XLSX files from Actix, Nemo, or DingLi to generate reports and color-coded maps automatically.")
 
-uploaded_files = st.file_uploader("Upload CSV or XLSX files", type=['csv', 'xlsx'], accept_multiple_files=True)
+# ── 1. ดักจับไฟล์จาก LINE ────────────────────────────────────────────────────
+# !!! อย่าลืมเอา Token ตัวยาวๆ ของคุณมาใส่ตรงนี้นะครับ !!!
+LINE_ACCESS_TOKEN = "/pO2wV3C2f6JL4ZUD0iSOS82dIks4I0FQH+qDTamuWCRijSgHscUhOOKoYg1mE4Xd2PYNwqJBi5gSV1Ijg/54akOUCoo6GnnGNOIzRo2/CjjPTSh/pXhr9ItUx/sOH1S+H/XWE9fiRabENNKLV59KwdB04t89/1O/w1cDnyilFU="
 
+if "line_file_bytes" not in st.session_state:
+    st.session_state.line_file_bytes = None
+    st.session_state.line_file_name = None
+
+query_params = st.query_params
+if "file_id" in query_params and st.session_state.line_file_bytes is None:
+    file_id = query_params["file_id"]
+    
+    with st.spinner("📥 Auto-fetching file from LINE..."):
+        headers = {"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
+        url = f"https://api-data.line.me/v2/bot/message/{file_id}/content"
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            st.session_state.line_file_bytes = response.content
+            # เช็คว่าเป็นไฟล์ Excel หรือ CSV
+            if response.content[:2] == b'PK':
+                st.session_state.line_file_name = f"LINE_Data_{file_id}.xlsx"
+            else:
+                st.session_state.line_file_name = f"LINE_Data_{file_id}.csv"
+            st.success("✅ File caught from LINE! Ready to analyze.")
+        else:
+            st.error(f"❌ Could not download file from LINE (Error {response.status_code})")
+
+# ── 2. ปุ่ม Browse ไฟล์ (ยังอยู่เหมือนเดิมเผื่ออัปโหลดมือ) ────────────────────────
+uploaded_files = st.file_uploader("Upload CSV or XLSX files (หรือรอรับไฟล์จาก LINE อัตโนมัติ)", type=['csv', 'xlsx'], accept_multiple_files=True)
+
+# ── ฟังก์ชันพื้นฐาน (ไม่ถูกแก้ไข) ────────────────────────────────────────────────
 CARTO_LAYERS = [{
     "below": "traces",
     "sourcetype": "raster",
@@ -364,14 +395,35 @@ updateMap();
 if "stat_group_count" not in st.session_state:
     st.session_state.stat_group_count = 1
 
+# ── 3. รวมไฟล์จากปุ่ม Upload และไฟล์จาก LINE เข้าด้วยกัน (Magic happens here) ───
+file_bytes_map = {}
+virtual_uploaded_files = []
+
+# จัดการไฟล์ที่อัปโหลดมือ
 if uploaded_files:
-    file_bytes_map = {f.name: f.read() for f in uploaded_files}
+    for f in uploaded_files:
+        file_bytes_map[f.name] = f.read()
+        virtual_uploaded_files.append(f)
 
+# จัดการไฟล์ที่โหลดมาจาก LINE
+if st.session_state.line_file_bytes:
+    fname = st.session_state.line_file_name
+    if fname not in file_bytes_map:
+        file_bytes_map[fname] = st.session_state.line_file_bytes
+        
+        class DummyFile:
+            def __init__(self, name):
+                self.name = name
+        virtual_uploaded_files.append(DummyFile(fname))
 
+# หลอกให้ระบบด้านล่างคิดว่าไฟล์ทั้งหมดมาจากปุ่ม Upload เพื่อไม่ให้พัง
+uploaded_files = virtual_uploaded_files
+
+if uploaded_files:
     sheet_selections = {}
     col_selections   = {}
 
-# ── Step 1: File Configuration ───────────────────────────────────────────
+# ── Step 1: File Configuration (โค้ดเดิมเป๊ะๆ) ──────────────────────────────────
     st.markdown("---")
     st.subheader("📋 Step 1 · File Configuration")
 
@@ -483,7 +535,6 @@ if uploaded_files:
             default_min -= 10.0
             default_max += 10.0
 
-        # ลบ st.markdown ออก แล้วใช้ Label ของ input แทนเพื่อให้ตรงกับกล่องอื่น
         rc1, rc2 = st.columns(2)
         with rc1:
             range_min = st.number_input("🎨 Range Min", value=round(default_min, 1), step=1.0)
