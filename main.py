@@ -6,6 +6,7 @@ import os
 import io
 import json
 import requests
+from urllib.parse import parse_qs
 
 st.set_page_config(page_title="Universal 5G Analyzer", layout="wide")
 st.title("🛰️ Universal RF Drive Test Analyzer")
@@ -19,9 +20,19 @@ if "line_file_bytes" not in st.session_state:
     st.session_state.line_file_name = None
 
 query_params = st.query_params
-if "file_id" in query_params and st.session_state.line_file_bytes is None:
-    file_id = query_params["file_id"]
 
+# Extract file_id — handles both direct ?file_id=xxx
+# AND LINE LIFF's wrapped format ?liff.state=%3Ffile_id%3Dxxx
+file_id = None
+if "file_id" in query_params:
+    file_id = query_params["file_id"]
+elif "liff.state" in query_params:
+    liff_state = query_params["liff.state"]          # e.g. "?file_id=606795211083612588"
+    parsed = parse_qs(liff_state.lstrip("?"))
+    if "file_id" in parsed:
+        file_id = parsed["file_id"][0]
+
+if file_id and st.session_state.line_file_bytes is None:
     with st.spinner("📥 Auto-fetching file from LINE..."):
         headers = {"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
         url = f"https://api-data.line.me/v2/bot/message/{file_id}/content"
@@ -34,7 +45,7 @@ if "file_id" in query_params and st.session_state.line_file_bytes is None:
             else:
                 st.session_state.line_file_name = f"LINE_Data_{file_id}.csv"
             st.success("✅ File caught from LINE! Ready to analyze.")
-            st.rerun()  # ← FIX 1: force rerun so the file is processed immediately
+            st.rerun()
         else:
             st.error(f"❌ Could not download file from LINE (Error {response.status_code})")
 
